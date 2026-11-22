@@ -1,0 +1,14 @@
+{
+  "name": "proyecto-backend",
+  "version": "1.0.0",
+  "description": "Backend de ejemplo con métricas Prometheus (compatibles con el laboratorio)",
+  "main": "app.js",
+  "private": true,
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "prom-client": "^15.1.3"
+  }
+}

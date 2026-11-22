@@ -1,0 +1,34 @@
+# =============================================================================
+# Proyecto final – Administración de Sistemas Operativos (UAO)
+# Archivo     : prometheus/prometheus.yml
+# Fase        : 3 – Monitoreo
+# Responsable : Persona 2 (dejado listo por Persona 1)
+# Propósito   : Define qué fuentes visita Prometheus y cada cuánto.
+# =============================================================================
+global:
+  scrape_interval: 5s        # cada cuánto lee las métricas (en producción: 15s o más)
+  evaluation_interval: 5s
+
+scrape_configs:
+  # Prometheus se mide a sí mismo.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Cada backend se lee DIRECTAMENTE (no a través de Nginx): si pasara por el
+  # balanceador, cada lectura caería en una instancia al azar y las cifras
+  # quedarían mezcladas.
+  - job_name: backends
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["backend1:3000", "backend2:3000", "backend3:3000"]
+
+  # El exporter traduce el stub_status de Nginx al formato de Prometheus.
+  - job_name: nginx
+    static_configs:
+      - targets: ["nginx-exporter:9113"]
+
+  # cAdvisor: CPU, memoria, red y disco de cada contenedor.
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]

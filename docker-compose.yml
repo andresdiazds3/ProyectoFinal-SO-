@@ -1,0 +1,165 @@
+# =============================================================================
+# Proyecto final – Administración de Sistemas Operativos (UAO)
+# Archivo     : docker-compose.yml
+# Fase        : 5 – Integración
+# Responsable : Persona 1
+# Propósito   : Levanta toda la infraestructura: 3 backends, Nginx, exportador
+#               de Nginx, cAdvisor, Prometheus y Grafana en una red propia.
+# =============================================================================
+
+# Nombre del proyecto: prefijo de los recursos que crea Docker.
+name: proyecto-final
+
+# Plantilla reutilizable ("ancla" YAML) con lo que comparten los 3 backends,
+# para no repetirlo tres veces. Cada backend la usa con "<<: *backend-base".
+x-backend: &backend-base
+  build: ./backend # construye la imagen desde backend/Dockerfile
+  image: proyecto-backend:1.0 # nombre de la imagen resultante (la misma para los 3)
+  pull_policy: build # no intenta descargarla de Docker Hub: siempre se construye
+  restart: unless-stopped # se reinicia solo si se cae
+  networks: [ monitoring-net ] # todos en la misma red
+  expose:
+    - "3000" # puerto accesible SOLO dentro de la red Docker
+
+services:
+  # ---------------------------------------------------------------------------
+  # BACKENDS (3 instancias de la misma imagen)
+  # ---------------------------------------------------------------------------
+  backend1:
+    <<: *backend-base
+    container_name: backend1
+    environment:
+      SERVER_NAME: "server 1" # así se identifica en la respuesta y en las métricas
+      PORT: "3000"
+
+  backend2:
+    <<: *backend-base
+    container_name: backend2
+    environment:
+      SERVER_NAME: "server 2"
+      PORT: "3000"
+
+  backend3:
+    <<: *backend-base
+    container_name: backend3
+    environment:
+      SERVER_NAME: "server 3"
+      PORT: "3000"
+
+  # ---------------------------------------------------------------------------
+  # NGINX: proxy inverso y balanceador. Única puerta de entrada al sistema.
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: nginx
+    ports:
+      # "puerto del computador : puerto del contenedor"
+      # Se entra por http://localhost:8080 (o el que pongas en .env).
+      - "${HOST_PORT_NGINX:-8080}:80"
+    volumes:
+      # Monta nuestro nginx.conf dentro del contenedor, en solo lectura (:ro).
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    # Nginx resuelve los nombres de los backends al arrancar; si todavía no
+    # existen, falla. Por eso espera a que los 3 estén "healthy".
+    depends_on:
+      backend1: { condition: service_healthy }
+      backend2: { condition: service_healthy }
+      backend3: { condition: service_healthy }
+    networks: [ monitoring-net ]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # NGINX EXPORTER: lee el stub_status de Nginx (puerto interno 8081) y lo
+  # traduce a métricas de Prometheus (puerto 9113). No se publica al host.
+  # ---------------------------------------------------------------------------
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.4.2
+    container_name: nginx-exporter
+    command:
+      - "--nginx.scrape-uri=http://nginx:8081/stub_status"
+    depends_on:
+      - nginx
+    networks: [ monitoring-net ]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # CADVISOR: mide CPU, memoria, red y disco de cada contenedor.
+  # Necesita montar rutas del sistema (solo lectura) y privileged: true.
+  # ---------------------------------------------------------------------------
+  cadvisor:
+    image: ghcr.io/google/cadvisor:0.56.2
+    container_name: cadvisor
+    command:
+      - "--housekeeping_interval=5s" # refresca cada 5 s (igual que Prometheus)
+      - "--docker_only=true" # solo contenedores Docker, menos ruido
+    ports:
+      - "${HOST_PORT_CADVISOR:-8082}:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    privileged: true
+    networks: [ monitoring-net ]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # PROMETHEUS: visita cada 5 s los targets de prometheus.yml y guarda las series.
+  # Los datos persisten en el volumen prometheus_data.
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v3.13.5
+    container_name: prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d" # conserva 7 días de datos
+    ports:
+      - "${HOST_PORT_PROMETHEUS:-9090}:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - backend1
+      - backend2
+      - backend3
+      - nginx-exporter
+      - cadvisor
+    networks: [ monitoring-net ]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # GRAFANA: dibuja los dashboards. La fuente de datos y el dashboard se cargan
+  # solos desde los archivos montados (provisioning). Datos en grafana_data.
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:12.4.0
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin123}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Al entrar, abre directamente nuestro dashboard.
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/proyecto-final.json
+    ports:
+      - "${HOST_PORT_GRAFANA:-3001}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    networks: [ monitoring-net ]
+    restart: unless-stopped
+
+# Red propia: los contenedores se encuentran por nombre (backend1, nginx...).
+networks:
+  monitoring-net:
+    name: monitoring-net
+    driver: bridge
+
+# Volúmenes con nombre: los datos sobreviven a "docker compose down".
+# Solo se borran con "docker compose down -v".
+volumes:
+  prometheus_data:
+  grafana_data:

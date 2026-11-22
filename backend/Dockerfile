@@ -1,3 +1,11 @@
+# =============================================================================
+# Proyecto final – Administración de Sistemas Operativos (UAO)
+# Archivo     : backend/Dockerfile
+# Fase        : 1 – Backend
+# Responsable : Persona 1
+# Propósito   : Imagen ligera del backend Node.js con healthcheck.
+# =============================================================================
+
 # Imagen base: Node 20 sobre Alpine Linux (muy pequeña, ~50 MB).
 FROM node:20-alpine
 
@@ -28,7 +36,7 @@ USER node
 # Cada 10 s Docker consulta /health. Si falla 3 veces seguidas, marca el
 # contenedor como "unhealthy". Nginx espera a que esté "healthy" para arrancar.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget -qO- http://localhost:3000/health || exit 1
+  CMD wget -qO- http://localhost:3000/health || exit 1
 
 # Comando que se ejecuta al iniciar el contenedor.
 CMD ["node", "app.js"]
