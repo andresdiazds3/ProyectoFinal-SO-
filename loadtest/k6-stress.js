@@ -1,12 +1,3 @@
-// =============================================================================
-// Proyecto final – Administración de Sistemas Operativos (UAO)
-// Archivo     : loadtest/k6-stress.js
-// Fase        : 6 – Pruebas de carga
-// Responsable : Persona 3
-// Propósito   : Prueba de estrés: sube la carga hasta saturar los backends
-//               para ver dónde se degrada la latencia.
-// Uso         : k6 run loadtest/k6-stress.js
-// =============================================================================
 import http from 'k6/http';
 import { check } from 'k6';
 

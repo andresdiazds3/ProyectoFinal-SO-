@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
-# =============================================================================
-# Proyecto final – Administración de Sistemas Operativos (UAO)
-# Archivo     : scripts/verificar.sh
-# Fase        : 5 – Integración
-# Responsable : Persona 1
-# Propósito   : Comprueba de una vez que toda la infraestructura funciona.
-# Uso         : ./scripts/verificar.sh
-# =============================================================================
 set -u
 
 # Lee los puertos de .env si existe (si no, usa los valores por defecto).

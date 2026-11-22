@@ -1,13 +1,3 @@
-// =============================================================================
-// Proyecto final – Administración de Sistemas Operativos (UAO)
-// Archivo     : loadtest/k6-load.js
-// Fase        : 6 – Pruebas de carga
-// Responsable : Persona 3
-// Propósito   : Carga progresiva contra Nginx. Cuenta cuántas respuestas
-//               atendió cada backend para demostrar el balanceo.
-// Uso         : k6 run loadtest/k6-load.js
-//               k6 run -e BASE_URL=http://localhost:8080 loadtest/k6-load.js
-// =============================================================================
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Counter } from 'k6/metrics';

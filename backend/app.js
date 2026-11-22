@@ -1,12 +1,3 @@
-// =============================================================================
-// Proyecto final – Administración de Sistemas Operativos (UAO)
-// Archivo     : backend/app.js
-// Fase        : 1 – Backend
-// Responsable : Persona 1
-// Propósito   : API que se identifica por instancia y expone métricas en
-//               formato Prometheus, con los MISMOS nombres y etiquetas que el
-//               backend Flask del laboratorio (flask_http_request_*).
-// =============================================================================
 'use strict';
 
 // -----------------------------------------------------------------------------

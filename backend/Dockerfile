@@ -1,11 +1,3 @@
-# =============================================================================
-# Proyecto final – Administración de Sistemas Operativos (UAO)
-# Archivo     : backend/Dockerfile
-# Fase        : 1 – Backend
-# Responsable : Persona 1
-# Propósito   : Imagen ligera del backend Node.js con healthcheck.
-# =============================================================================
-
 # Imagen base: Node 20 sobre Alpine Linux (muy pequeña, ~50 MB).
 FROM node:20-alpine
 

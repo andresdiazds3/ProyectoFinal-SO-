@@ -1,10 +1,3 @@
-# =============================================================================
-# Proyecto final – Administración de Sistemas Operativos (UAO)
-# Archivo     : prometheus/prometheus.yml
-# Fase        : 3 – Monitoreo
-# Responsable : Persona 2 (dejado listo por Persona 1)
-# Propósito   : Define qué fuentes visita Prometheus y cada cuánto.
-# =============================================================================
 global:
   scrape_interval: 5s        # cada cuánto lee las métricas (en producción: 15s o más)
   evaluation_interval: 5s
