@@ -258,10 +258,5 @@ ProyectoFinal-SO-/
 │   └── k6-stress.js             # Prueba de estrés (hasta 300 VUs)
 ├── scripts/
 │   └── verificar.sh             # Script automatizado de validación integral
-└── docs/
-    ├── pasos/                   # Bitácora de comandos por fase
-    ├── capturas/                # Evidencias gráficas de Prometheus, Grafana y cAdvisor
-    ├── resultados/              # Salidas y resúmenes JSON/TXT de k6
-    ├── informe/                 # Informe técnico en PDF
-    └── video/                   # Guion y enlace al video de sustentación
+
 ```
