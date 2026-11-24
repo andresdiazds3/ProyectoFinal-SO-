@@ -6,9 +6,9 @@ Infraestructura desplegada en contenedores Docker que integra **Nginx** como pro
 
 ## Integrantes
 
-- [Nombre Integrante 1]
-- [Nombre Integrante 2]
-- [Nombre Integrante 3]
+- Juan David Agudelo Diago
+- Cesar Andrés Díaz Jimenez
+- Andrés Felipe Medina Díaz
 
 ---
 
@@ -51,7 +51,7 @@ Un solo comando (`docker compose up -d --build`) despliega **8 contenedores** in
 | `GET /health` | Healthcheck (`{"status":"ok","server":"server N"}`) usado por Docker |
 | `GET /headers` | Muestra la IP vista por el backend y las cabeceras recibidas (`X-Forwarded-For`, `X-Real-IP`) |
 | `GET /slow?ms=500` | Simula carga o trabajo con latencia controlada (en milisegundos) |
-| `GET /metrics` | Expone métricas de Prometheus (`flask_http_request_total`, `flask_http_request_duration_seconds`, `app_info` y métricas de proceso). Bloqueado con `404` en el puerto público de Nginx |
+| `GET /metrics` | Expone métricas de Prometheus (`flask_http_request_total`, `flask_http_request_duration_seconds`, `app_info` y métricas de proceso). Bloqueado con `404` en el puerto público de Nginx. *Los nombres `flask_*` se mantienen por compatibilidad con los dashboards del laboratorio; el backend está hecho en Node.js con `prom-client`.* |
 
 ---
 
@@ -182,6 +182,9 @@ k6 run --summary-export=docs/resultados/k6-stress-resumen.json \
 # En Linux con Docker nativo:
 docker run --rm -i --network host -v "$PWD/loadtest:/scripts" grafana/k6:1.0.0 run /scripts/k6-load.js
 
+# Para guardar el resumen JSON en docs/resultados/ (con el usuario del host):
+docker run --rm -i --user "$(id -u):$(id -g)" --network host -v "$PWD/loadtest:/scripts:ro" -v "$PWD/docs/resultados:/out" grafana/k6:1.0.0 run --summary-export=/out/k6-load-resumen.json /scripts/k6-load.js
+
 # En Windows / macOS con Docker Desktop:
 docker run --rm -i -e BASE_URL=http://host.docker.internal:8080 -v "$PWD/loadtest:/scripts" grafana/k6:1.0.0 run /scripts/k6-load.js
 ```
@@ -252,11 +255,14 @@ ProyectoFinal-SO-/
 │   │   ├── datasources/         # Conexión automática a Prometheus
 │   │   └── dashboards/          # Proveedor automático de dashboards
 │   └── dashboards/
-│       └── proyecto-final.json  # Dashboard con 19 paneles (Estado, Backends, Nginx, cAdvisor)
+│       └── proyecto-final.json  # Dashboard con 19 paneles en 4 secciones (Estado, Backends, Nginx, cAdvisor)
 ├── loadtest/
 │   ├── k6-load.js               # Prueba de carga progresiva (hasta 100 VUs)
 │   └── k6-stress.js             # Prueba de estrés (hasta 300 VUs)
 ├── scripts/
 │   └── verificar.sh             # Script automatizado de validación integral
+└── docs/
+    ├── resultados/              # Salidas de k6 y prueba de tolerancia a fallos
+    └── informe/                 # Informe (HTML y PDF) e imágenes
 
 ```

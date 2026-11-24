@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Informe Proyecto Final - Infraestructura Containerizada</title>
+<style>
+  @page { size: Letter; margin: 22mm 20mm; }
+  body { font-family: "DejaVu Sans", Arial, sans-serif; font-size: 10.5pt; line-height: 1.45; color: #1b1b1b; }
+  h1 { font-size: 20pt; margin: 0 0 6pt; }
+  h2 { font-size: 15pt; border-bottom: 2px solid #1f4e79; padding-bottom: 3pt; margin-top: 22pt; color: #1f4e79; page-break-after: avoid; }
+  h3 { font-size: 12pt; margin-top: 14pt; color: #1f4e79; page-break-after: avoid; }
+  code, pre { font-family: "DejaVu Sans Mono", "Liberation Mono", monospace; font-size: 8.6pt; }
+  pre { background: #f3f5f7; border: 1px solid #d5dbe0; border-radius: 4px; padding: 8pt; white-space: pre-wrap; page-break-inside: avoid; }
+  code { background: #f3f5f7; padding: 0 2pt; }
+  table { border-collapse: collapse; width: 100%; margin: 8pt 0; font-size: 9.2pt; page-break-inside: avoid; }
+  th, td { border: 1px solid #bcc5cc; padding: 4pt 6pt; text-align: left; vertical-align: top; }
+  th { background: #e6eef5; }
+  .portada { text-align: center; padding-top: 80pt; page-break-after: always; }
+  .portada h1 { font-size: 26pt; }
+  .portada p { font-size: 12pt; margin: 4pt 0; }
+  .nota { background: #fff7e0; border-left: 4px solid #e0a800; padding: 6pt 10pt; margin: 8pt 0; page-break-inside: avoid; }
+  .pend { background: #fdecea; border: 2px dashed #c0392b; padding: 18pt; text-align: center; margin: 10pt 0; color: #8a1f11; page-break-inside: avoid; }
+  figure { margin: 10pt 0; text-align: center; page-break-inside: avoid; }
+  figure img { max-width: 100%; border: 1px solid #ccc; }
+  figcaption { font-size: 9pt; color: #555; margin-top: 3pt; }
+  .toc li { margin: 2pt 0; }
+</style>
+</head>
+<body>
+
+<div class="portada">
+  <p>Universidad Autónoma de Occidente (UAO)</p>
+  <p>Administración de Sistemas Operativos</p>
+  <br><br>
+  <h1>Proyecto Final</h1>
+  <p style="font-size:15pt"><b>Infraestructura containerizada con balanceo de carga y monitoreo</b></p>
+  <p>Nginx · Node.js · Prometheus · Grafana · Nginx Prometheus Exporter · cAdvisor</p>
+  <br><br>
+  <p><b>Integrantes</b></p>
+  <p>Juan David Agudelo Diago</p>
+  <p>Cesar Andrés Díaz Jimenez</p>
+  <p>Andrés Felipe Medina Díaz</p>
+  <br><br>
+  <p>Noviembre de 2026</p>
+  <p><b>Repositorio:</b><br>https://github.com/andresdiazds3/ProyectoFinal-SO-</p>
+  <p><b>Video de presentación:</b><br>&lt;PENDIENTE: pegar aquí el enlace del video&gt;</p>
+</div>
+
+<h2 style="margin-top:0">Contenido</h2>
+<ol class="toc">
+  <li>Introducción y objetivos</li>
+  <li>Descripción de la arquitectura</li>
+  <li>Explicación del archivo docker-compose.yml</li>
+  <li>Explicación del Dockerfile del backend (y de la aplicación)</li>
+  <li>Configuración de Nginx como proxy inverso y balanceador</li>
+  <li>Configuración de Prometheus y exportadores</li>
+  <li>Métricas monitoreadas y dashboards de Grafana</li>
+  <li>Procedimiento de despliegue paso a paso</li>
+  <li>Pruebas realizadas y resultados (funcionalidad, carga, estrés, tolerancia a fallos, persistencia)</li>
+  <li>Decisiones de diseño y problemas encontrados</li>
+  <li>Conclusiones</li>
+  <li>Anexo: estructura del repositorio</li>
+</ol>
+
+<h2>1. Introducción y objetivos</h2>
+<p>Una tarea central de un administrador de sistemas operativos es crear entornos reproducibles para desarrollar y probar aplicaciones. Este proyecto implementa, mediante Docker y Docker Compose, una infraestructura completa que incluye un proxy inverso con balanceo de carga, varias instancias de una aplicación backend y una pila de observabilidad para medir su rendimiento.</p>
+<p><b>Objetivos específicos</b></p>
+<ul>
+  <li>Desplegar con un único comando (<code>docker compose up -d --build</code>) 8 contenedores interconectados por una red Docker personalizada.</li>
+  <li>Distribuir el tráfico con Nginx entre 3 instancias independientes e identificables de un backend que expone <code>/metrics</code>.</li>
+  <li>Recolectar métricas con Prometheus desde los backends, Nginx (vía exportador) y cAdvisor.</li>
+  <li>Visualizar latencia, tasa de solicitudes y uso de recursos en dashboards de Grafana aprovisionados automáticamente.</li>
+  <li>Persistir los datos de Prometheus y Grafana mediante volúmenes.</li>
+  <li>Validar el sistema con pruebas de carga (k6), de estrés, de tolerancia a fallos y de persistencia.</li>
+</ul>
+
+<h2>2. Descripción de la arquitectura</h2>
+<p>El sistema se compone de 8 contenedores en la red <code>monitoring-net</code> (bridge). Los contenedores se descubren por nombre gracias al DNS interno de Docker. Solo Nginx, Prometheus, Grafana y cAdvisor publican puertos al host; los backends y el exportador permanecen internos.</p>
+<pre>
+                    HOST (máquina física)
+ Navegador / curl / k6 ──► localhost:8080
+ Prometheus ► :9090     Grafana ► :3001     cAdvisor ► :8082
+
+ ┌──────────────────── Red Docker: monitoring-net ──────────────────────┐
+ │            ┌──► backend1 :3000 ("server 1") ─┐                       │
+ │  nginx:80 ─┼──► backend2 :3000 ("server 2") ─┼─ /metrics ◄─┐         │
+ │     │      └──► backend3 :3000 ("server 3") ─┘             │ scrape  │
+ │     │ :8081/stub_status (solo interno)                     │         │
+ │     ▼                                                      │         │
+ │  nginx-exporter :9113 ◄──────── scrape ────────── prometheus :9090   │
+ │  cadvisor :8080 ◄────────────── scrape ───────────────┘    ▲         │
+ │                                                  PromQL    │         │
+ │                                                     grafana :3000    │
+ └──────────────────────────────────────────────────────────────────────┘
+</pre>
+<table>
+  <tr><th>Servicio</th><th>Imagen</th><th>Puerto (interno → host)</th><th>Función</th></tr>
+  <tr><td>backend1/2/3</td><td>proyecto-backend:1.0 (construida localmente)</td><td>3000 → no publicado</td><td>API Node.js + Express; se identifica como "server N" y expone <code>/metrics</code></td></tr>
+  <tr><td>nginx</td><td>nginx:1.27-alpine</td><td>80 → 8080; 8081 interno</td><td>Proxy inverso, balanceador round-robin y <code>stub_status</code></td></tr>
+  <tr><td>nginx-exporter</td><td>nginx/nginx-prometheus-exporter:1.4.2</td><td>9113 → no publicado</td><td>Convierte <code>stub_status</code> en métricas Prometheus</td></tr>
+  <tr><td>cadvisor</td><td>ghcr.io/google/cadvisor:0.56.2</td><td>8080 → 8082</td><td>CPU, memoria, red y disco por contenedor</td></tr>
+  <tr><td>prometheus</td><td>prom/prometheus:v3.13.5</td><td>9090 → 9090</td><td>Recolección y almacenamiento de series de tiempo</td></tr>
+  <tr><td>grafana</td><td>grafana/grafana:12.4.0</td><td>3000 → 3001</td><td>Visualización con datasource y dashboard aprovisionados</td></tr>
+</table>
+<p><b>Flujos de datos.</b> (1) <i>Tráfico de usuario:</i> cliente → Nginx:80 → backend elegido por round-robin. (2) <i>Métricas de aplicación:</i> Prometheus consulta <code>/metrics</code> de cada backend directamente cada 5 s. (3) <i>Métricas de Nginx:</i> el exportador lee <code>http://nginx:8081/stub_status</code> y Prometheus lee al exportador. (4) <i>Métricas de recursos:</i> Prometheus lee a cAdvisor. (5) <i>Visualización:</i> Grafana ejecuta consultas PromQL contra Prometheus.</p>
+
+<h2>3. Explicación del archivo docker-compose.yml</h2>
+<h3>3.1 Elementos generales</h3>
+<ul>
+  <li><b>name: proyecto-final</b>: prefijo de los recursos creados (volúmenes, contenedores).</li>
+  <li><b>Ancla YAML <code>x-backend: &amp;backend-base</code></b>: plantilla compartida por los tres backends (<code>build: ./backend</code>, imagen <code>proyecto-backend:1.0</code>, <code>pull_policy: build</code>, <code>restart: unless-stopped</code>, red y <code>expose: 3000</code>). Cada backend la reutiliza con <code>&lt;&lt;: *backend-base</code> y solo define su <code>container_name</code> y su variable <code>SERVER_NAME</code> ("server 1", "server 2", "server 3"). Así se evita repetir configuración y los tres comparten exactamente la misma imagen.</li>
+  <li><b>Red <code>monitoring-net</code></b> (driver bridge, con nombre fijo): permite que los servicios se resuelvan por nombre (<code>backend1</code>, <code>nginx</code>, <code>prometheus</code>…).</li>
+  <li><b>Volúmenes con nombre</b> <code>prometheus_data</code> y <code>grafana_data</code>: los datos sobreviven a <code>docker compose down</code> y solo se eliminan con <code>down -v</code>.</li>
+  <li><b>Variables de entorno (<code>.env</code>)</b>: los puertos del host y las credenciales de Grafana se leen con valores por defecto (<code>${HOST_PORT_NGINX:-8080}</code>, etc.). Si un puerto está ocupado, se cambia solo en <code>.env</code>. El archivo <code>.env</code> está en <code>.gitignore</code> y se versiona únicamente <code>.env.example</code>.</li>
+</ul>
+<h3>3.2 Servicios</h3>
+<table>
+  <tr><th>Servicio</th><th>Configuración destacada y razón</th></tr>
+  <tr><td>backend1-3</td><td><code>expose</code> en lugar de <code>ports</code>: solo se accede a través de Nginx, nunca directamente desde el host. El <code>HEALTHCHECK</code> del Dockerfile deja a cada contenedor en estado <i>healthy</i>.</td></tr>
+  <tr><td>nginx</td><td>Monta <code>nginx.conf</code> en solo lectura (<code>:ro</code>). <code>depends_on</code> con <code>condition: service_healthy</code> sobre los 3 backends, porque Nginx resuelve los nombres del upstream al arrancar y fallaría si aún no existen.</td></tr>
+  <tr><td>nginx-exporter</td><td><code>command: --nginx.scrape-uri=http://nginx:8081/stub_status</code>. No publica puertos.</td></tr>
+  <tr><td>cadvisor</td><td>Monta <code>/</code>, <code>/var/run</code>, <code>/sys</code> y <code>/var/lib/docker</code> en solo lectura y usa <code>privileged: true</code> para leer los cgroups. Opciones <code>--housekeeping_interval=5s</code> (alineado al scrape de Prometheus) y <code>--docker_only=true</code> (solo contenedores Docker).</td></tr>
+  <tr><td>prometheus</td><td>Monta <code>prometheus.yml</code> (solo lectura) y el volumen <code>prometheus_data</code> en <code>/prometheus</code>; retención de 7 días (<code>--storage.tsdb.retention.time=7d</code>).</td></tr>
+  <tr><td>grafana</td><td>Volumen <code>grafana_data</code>; monta <code>provisioning/</code> y <code>dashboards/</code> en solo lectura; <code>GF_USERS_ALLOW_SIGN_UP=false</code> y <code>GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH</code> para abrir directamente el dashboard del proyecto.</td></tr>
+</table>
+<h3>3.3 Orden de arranque</h3>
+<p>Backends (healthy) → Nginx → nginx-exporter; cAdvisor; Prometheus (espera a backends, exporter y cAdvisor) → Grafana (espera a Prometheus). El arranque observado muestra exactamente esa secuencia.</p>
+
+<h2>4. Explicación del Dockerfile del backend</h2>
+<pre>
+FROM node:20-alpine            # base ligera (~50 MB)
+WORKDIR /app
+COPY package*.json ./          # primero solo las dependencias (aprovecha caché de capas)
+RUN npm ci --omit=dev          # instala exactamente lo del package-lock.json, sin devDependencies
+COPY app.js ./
+ENV NODE_ENV=production PORT=3000
+EXPOSE 3000
+USER node                      # no se ejecuta como root
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget -qO- http://localhost:3000/health || exit 1
+CMD ["node", "app.js"]
+</pre>
+<ul>
+  <li><b>Caché de capas:</b> se copian primero <code>package*.json</code> y se instalan dependencias; mientras no cambien, las reconstrucciones no repiten <code>npm ci</code>.</li>
+  <li><b>Seguridad:</b> <code>USER node</code> evita ejecutar la aplicación con privilegios de root; <code>app.disable('x-powered-by')</code> oculta la tecnología del servidor.</li>
+  <li><b>Healthcheck:</b> consulta <code>/health</code> cada 10 s; tras 3 fallos el contenedor pasa a <i>unhealthy</i>. Nginx depende de este estado.</li>
+  <li><b>.dockerignore</b> excluye archivos innecesarios (p. ej. <code>node_modules</code>) del contexto de construcción.</li>
+</ul>
+<h3>4.1 La aplicación (app.js)</h3>
+<p>API en Node.js con Express y la librería oficial <code>prom-client</code>. Cada instancia recibe <code>SERVER_NAME</code> por variable de entorno, que aparece en las respuestas, en la cabecera <code>X-Backend</code> y como etiqueta <code>backend</code> de todas las métricas.</p>
+<table>
+  <tr><th>Endpoint</th><th>Descripción</th></tr>
+  <tr><td><code>GET /</code></td><td>HTML con <code>Hello from server N</code> y el hostname del contenedor.</td></tr>
+  <tr><td><code>GET /health</code></td><td><code>{"status":"ok","server":"server N"}</code>, usado por Docker.</td></tr>
+  <tr><td><code>GET /headers</code></td><td>IP vista por el backend y cabeceras recibidas (<code>X-Real-IP</code>, <code>X-Forwarded-For</code>).</td></tr>
+  <tr><td><code>GET /slow?ms=N</code></td><td>Responde tras N ms (por defecto 1000, máximo 30000); permite controlar la latencia en las pruebas.</td></tr>
+  <tr><td><code>GET /metrics</code></td><td>Métricas en formato Prometheus.</td></tr>
+</table>
+<p>Un middleware mide cada petición y, al terminar la respuesta, registra el contador y el histograma. Se excluyen <code>/health</code> y <code>/metrics</code> para no contaminar las cifras con los chequeos de Docker y los <i>scrapes</i> de Prometheus, y la etiqueta <code>endpoint</code> se agrupa por ruta (<code>index</code>, <code>slow</code>, <code>headers</code>, <code>no_encontrada</code>) para no generar una serie por cada URL.</p>
+<div class="nota"><b>Nota sobre los nombres de métricas:</b> la aplicación está hecha en Node.js, pero usa los nombres <code>flask_http_request_total</code> y <code>flask_http_request_duration_seconds</code> (los de <code>prometheus-flask-exporter</code>) para mantener compatibilidad con los dashboards y consultas de laboratorios previos del curso. El nombre es una convención; no implica que se use Flask.</div>
+
+<h2>5. Configuración de Nginx como proxy inverso y balanceador</h2>
+<h3>5.1 Grupo upstream y round-robin</h3>
+<pre style="white-space:pre">upstream backend_pool {
+  # memoria compartida entre workers
+  zone backend_pool 64k;
+  server backend1:3000;
+  server backend2:3000;
+  server backend3:3000;
+}</pre>
+<p>Sin directiva adicional Nginx usa <b>round-robin</b> (1, 2, 3, 1, 2, 3…). Se añadió <code>zone</code> porque, con <code>worker_processes auto</code> (un worker por núcleo), cada worker lleva su propio turno si el estado no es compartido, y con pocas peticiones todas caían en el mismo backend. Con la zona compartida el reparto es exacto.</p>
+<h3>5.2 Servidor público (puerto 80)</h3>
+<ul>
+  <li><code>location = /metrics { return 404; }</code>: <code>/metrics</code> no se expone por el proxy. Prometheus consulta cada backend directamente; si pasara por el balanceador, cada lectura caería en una instancia al azar y las cifras quedarían mezcladas.</li>
+  <li><code>location / { proxy_pass http://backend_pool; … }</code> con cabeceras <code>Host</code>, <code>X-Real-IP</code>, <code>X-Forwarded-For</code> y <code>X-Forwarded-Proto</code> para conservar la información original del cliente.</li>
+  <li><code>proxy_next_upstream error timeout http_502 http_503 http_504</code> y <code>proxy_connect_timeout 2s</code>: si un backend falla, la petición se reintenta en otro nodo del pool (tolerancia a fallos).</li>
+  <li><code>add_header X-Upstream-Addr $upstream_addr always</code>: devuelve la IP:puerto del backend que atendió, útil para demostrar el balanceo con <code>curl -I</code>.</li>
+  <li><code>log_format main</code> incluye <code>upstream</code>, <code>rt</code> (tiempo total) y <code>urt</code> (tiempo del backend) para analizar el reparto en los logs.</li>
+</ul>
+<h3>5.3 Servidor de estado (puerto 8081, interno)</h3>
+<p>Un segundo bloque <code>server { listen 8081; location = /stub_status { stub_status; access_log off; } }</code> habilita el módulo <code>stub_status</code>. No se publica en el compose, por lo que solo es alcanzable dentro de <code>monitoring-net</code>; lo consume el nginx-prometheus-exporter.</p>
+
+<h2>6. Configuración de Prometheus y exportadores</h2>
+<p>Prometheus recolecta cada 5 s (<code>scrape_interval: 5s</code>) con 4 <i>jobs</i> que suman <b>6 targets</b>:</p>
+<table>
+  <tr><th>Job</th><th>Targets</th><th>Qué se mide</th></tr>
+  <tr><td><code>prometheus</code></td><td>localhost:9090</td><td>Prometheus se mide a sí mismo.</td></tr>
+  <tr><td><code>backends</code></td><td>backend1:3000, backend2:3000, backend3:3000</td><td>Peticiones, latencia y métricas de proceso de cada instancia.</td></tr>
+  <tr><td><code>nginx</code></td><td>nginx-exporter:9113</td><td>Conexiones y peticiones de Nginx (desde <code>stub_status</code>).</td></tr>
+  <tr><td><code>cadvisor</code></td><td>cadvisor:8080</td><td>CPU, memoria, red y disco por contenedor.</td></tr>
+</table>
+<p>El intervalo de 5 s se eligió para que los gráficos reaccionen rápido durante las demostraciones; en producción se usaría 15 s o más para reducir carga y almacenamiento.</p>
+<figure>
+  <img src="img/prometheus-targets.png" alt="Targets de Prometheus">
+  <figcaption>Figura 1. Página de targets de Prometheus.</figcaption>
+</figure>
+<figure>
+  <img src="img/cadvisor.png" alt="cAdvisor">
+  <figcaption>Figura 2. cAdvisor: lista de contenedores Docker (backend1-3, nginx, nginx-exporter, prometheus, grafana y cadvisor).</figcaption>
+</figure>
+
+<h2>7. Métricas monitoreadas y dashboards de Grafana</h2>
+<h3>7.1 Aprovisionamiento automático</h3>
+<p>Grafana no requiere configuración manual: <code>provisioning/datasources/prometheus.yml</code> crea el datasource Prometheus (uid fijo <code>prometheus</code>, <code>http://prometheus:9090</code>, por defecto y no editable) y <code>provisioning/dashboards/dashboards.yml</code> carga los JSON de <code>grafana/dashboards/</code> en la carpeta "Proyecto Final". Así el dashboard "Proyecto Final - Infraestructura" aparece al iniciar y es reproducible desde el repositorio. Se verificó por la API de Grafana que el dashboard y el datasource existen.</p>
+<h3>7.2 Métricas de los backends (prom-client)</h3>
+<table>
+  <tr><th>Métrica</th><th>Tipo</th><th>Uso</th></tr>
+  <tr><td><code>flask_http_request_total{backend,method,status}</code></td><td>Counter</td><td><code>rate()</code> → peticiones por segundo; filtrando <code>status=~"5.."</code> → errores.</td></tr>
+  <tr><td><code>flask_http_request_duration_seconds{backend,endpoint,method,status}</code></td><td>Histogram (buckets 5 ms a 10 s)</td><td><code>histogram_quantile()</code> → latencia p50 y p95.</td></tr>
+  <tr><td><code>app_info{backend,server}</code></td><td>Gauge</td><td>Identifica la instancia.</td></tr>
+  <tr><td><code>process_*</code>, <code>nodejs_*</code></td><td>Default metrics</td><td>CPU, memoria y event loop del proceso.</td></tr>
+</table>
+<h3>7.3 Métricas de Nginx y cAdvisor</h3>
+<ul>
+  <li><b>Nginx:</b> <code>nginx_connections_active/reading/writing/waiting</code>, <code>nginx_connections_accepted/handled</code>, <code>nginx_http_requests_total</code>, <code>nginx_up</code>.</li>
+  <li><b>cAdvisor:</b> <code>container_cpu_usage_seconds_total</code>, <code>container_memory_working_set_bytes</code>, <code>container_network_receive/transmit_bytes_total</code>, <code>container_fs_reads/writes_bytes_total</code>.</li>
+</ul>
+<h3>7.4 Paneles del dashboard (23 elementos: 4 filas + 19 paneles)</h3>
+<table>
+  <tr><th>Sección</th><th>Panel</th><th>Consulta PromQL</th></tr>
+  <tr><td rowspan="5">Estado general</td><td>Targets en UP (esperado: 6)</td><td><code>sum(up)</code></td></tr>
+  <tr><td>Peticiones/s totales (backends)</td><td><code>sum(rate(flask_http_request_total[30s]))</code></td></tr>
+  <tr><td>Errores 5xx por segundo</td><td><code>sum(rate(flask_http_request_total{status=~"5.."}[30s])) or vector(0)</code></td></tr>
+  <tr><td>Conexiones activas en Nginx</td><td><code>nginx_connections_active</code></td></tr>
+  <tr><td>Backends en UP</td><td><code>sum(up{job="backends"})</code></td></tr>
+  <tr><td rowspan="5">Backends (Node.js)</td><td>Peticiones por segundo por backend</td><td><code>sum by (backend) (rate(flask_http_request_total[30s]))</code></td></tr>
+  <tr><td>Reparto de peticiones entre backends</td><td><code>sum by (backend) (increase(flask_http_request_total[$__range]))</code></td></tr>
+  <tr><td>Peticiones por endpoint</td><td><code>sum by (endpoint) (rate(flask_http_request_duration_seconds_count[30s]))</code></td></tr>
+  <tr><td>Latencia p95 por backend</td><td><code>histogram_quantile(0.95, sum by (le, backend) (rate(…_bucket[30s])))</code></td></tr>
+  <tr><td>Latencia p50 por backend</td><td><code>histogram_quantile(0.50, …)</code></td></tr>
+  <tr><td rowspan="3">Nginx</td><td>Peticiones por segundo en Nginx</td><td><code>rate(nginx_http_requests_total[30s])</code></td></tr>
+  <tr><td>Conexiones activas / lectura</td><td><code>nginx_connections_active</code>, <code>nginx_connections_reading</code></td></tr>
+  <tr><td>Conexiones aceptadas vs manejadas</td><td><code>rate(nginx_connections_accepted[30s])</code>, <code>rate(nginx_connections_handled[30s])</code></td></tr>
+  <tr><td rowspan="6">Recursos por contenedor (cAdvisor)</td><td>CPU por contenedor</td><td><code>sum by (name) (rate(container_cpu_usage_seconds_total{name!=""}[30s]))</code></td></tr>
+  <tr><td>Memoria por contenedor</td><td><code>container_memory_working_set_bytes{name!=""}</code></td></tr>
+  <tr><td>Red recibida / enviada</td><td><code>rate(container_network_receive_bytes_total…)</code>, <code>…transmit…</code></td></tr>
+  <tr><td>Disco: escritura / lectura</td><td><code>rate(container_fs_writes_bytes_total…)</code>, <code>…reads…</code></td></tr>
+</table>
+<p>Cubre los tres aspectos pedidos en la guía: <b>latencia</b> (p50/p95), <b>tasa de solicitudes</b> (por backend, por endpoint y en Nginx) y <b>uso de recursos</b> (CPU, memoria, red y disco).</p>
+
+<h3>7.5 Dashboard en funcionamiento durante la prueba de carga</h3>
+<p>Las siguientes capturas se tomaron con el rango "Last 15 minutes" y refresco de 5 s, durante la prueba de carga de la sección 9.3 (pico alrededor de las 22:30).</p>
+<figure>
+  <img src="img/grafana-1-estado-backends.png" alt="Dashboard: estado general y backends">
+  <figcaption>Figura 3. Estado general y backends: 6 targets en UP, 3 backends en UP, 0 errores 5xx; reparto de 33 % por backend; picos de ~190 req/s por instancia (≈ 300 req/s por endpoint); latencia p95 ≈ 234–242 ms (valor interpolado por Prometheus; ver sección 9.3).</figcaption>
+</figure>
+<figure>
+  <img src="img/grafana-2-nginx-recursos.png" alt="Dashboard: Nginx y recursos">
+  <figcaption>Figura 4. Nginx (hasta ~600 req/s y ~100 conexiones activas durante el pico) y recursos por contenedor.</figcaption>
+</figure>
+<figure>
+  <img src="img/grafana-3-recursos.png" alt="Dashboard: recursos por contenedor">
+  <figcaption>Figura 5. CPU, memoria, red y disco por contenedor. El contenedor con nombre aleatorio (<code>dazzling_mayer</code>) es el contenedor temporal de k6 que generó la carga.</figcaption>
+</figure>
+<p><b>Lectura de las gráficas.</b></p>
+<ul>
+  <li><b>Reparto:</b> el gráfico circular muestra 33 % para cada backend, y las tres líneas de peticiones por segundo se superponen, lo que confirma el round-robin bajo carga.</li>
+  <li><b>Latencia:</b> el p95 se mantiene en ≈ 234–242 ms, sin degradación al subir la carga. Es mayor que el p95 de k6 (≈ 201 ms) por la forma en que Prometheus calcula los percentiles, no por una sobrecarga real (ver explicación en la sección 9.3). El panel de la mediana (p50) alterna entre ≈ 5 ms y ≈ 100 ms según el backend porque la mitad de las peticiones (<code>/</code>) es casi instantánea y la otra mitad (<code>/slow</code>) tarda 200 ms: el p50 cae justo en la frontera entre ambos grupos.</li>
+  <li><b>Nginx:</b> la tasa de peticiones y las conexiones activas suben y bajan con el perfil de la prueba (rampa de subida, pico y descenso).</li>
+  <li><b>Recursos:</b> la CPU, la red recibida y enviada tienen su pico en el mismo momento, con mayor consumo en Nginx y los backends; la memoria se mantiene estable (Prometheus y Grafana son los mayores consumidores, hasta ~190 MiB y ~130 MiB). La escritura en disco corresponde sobre todo a Grafana y Prometheus; la lectura es casi nula.</li>
+  <li><b>Errores:</b> el panel "Errores 5xx por segundo" permaneció en 0.</li>
+</ul>
+
+<h2>8. Procedimiento de despliegue paso a paso</h2>
+<ol>
+  <li><b>Requisitos:</b> Docker 29.9.2 y Docker Compose 5.6.1 (verificados con <code>docker --version</code> y <code>docker compose version</code>); puertos 8080, 9090, 3001 y 8082 libres; k6 para las pruebas.</li>
+  <li><b>Configuración:</b> <code>git clone https://github.com/andresdiazds3/ProyectoFinal-SO-.git</code>, <code>cd ProyectoFinal-SO-</code>, <code>cp .env.example .env</code>.</li>
+  <li><b>Despliegue:</b> <code>docker compose up -d --build</code> construye <code>proyecto-backend:1.0</code> y levanta los 8 contenedores; <code>docker compose ps</code> confirma que los backends y cAdvisor están <i>healthy</i>.</li>
+  <li><b>Verificación automática:</b> <code>./scripts/verificar.sh</code> comprueba los 8 contenedores, la salud de los backends, el round-robin (9 peticiones), el 404 de <code>/metrics</code> en Nginx, la disponibilidad de Prometheus, Grafana y cAdvisor y los 6 targets en UP.</li>
+  <li><b>Acceso desde el host:</b> http://localhost:8080 (app), :9090 (Prometheus), :3001 (Grafana), :8082 (cAdvisor).</li>
+  <li><b>Pruebas de carga:</b> k6 se ejecuta <b>desde la máquina host</b> (como pide el enunciado), usando la imagen oficial <code>grafana/k6</code> en Docker con <code>--network host</code>, de modo que el contenedor de k6 comparte la red del host y ataca <code>http://localhost:8080</code> igual que lo haría k6 instalado localmente (ver sección 9.3).</li>
+  <li><b>Detener:</b> <code>docker compose down</code> (conserva volúmenes) o <code>down -v</code> (los elimina).</li>
+</ol>
+
+<h2>9. Pruebas realizadas y resultados</h2>
+
+<h3>9.1 Verificación de funcionamiento</h3>
+<p>El resultado de <code>scripts/verificar.sh</code> tras el despliegue fue:</p>
+<pre>
+1) Contenedores        [OK] backend1, backend2, backend3, nginx, nginx-exporter, cadvisor, prometheus, grafana (running)
+2) Salud backends      [OK] backend1/2/3 healthy
+3) Round-robin (9 pet.) Reparto: 3 server 1 · 3 server 2 · 3 server 3  [OK]
+4) /metrics en proxy   [OK] devuelve 404
+5) Servicios web       [OK] Prometheus, Grafana y cAdvisor responden
+6) Targets Prometheus  [OK] 6 targets en UP
+TODO BIEN.
+</pre>
+<figure>
+  <img src="img/app-nginx.png" alt="Aplicación servida por Nginx" style="max-width:55%">
+  <figcaption>Figura 6. Aplicación accesible desde el navegador del host en http://localhost:8080.</figcaption>
+</figure>
+
+<h3>9.2 Balanceo de carga (round-robin)</h3>
+<p>Con <code>for i in $(seq 1 9); do curl -s http://localhost:8080/ | grep -o 'server [0-9]'; done</code> se obtiene la secuencia exacta server 1, 2, 3, 1, 2, 3, 1, 2, 3. Se usa <code>curl</code> y no el navegador porque este reutiliza la conexión TCP (<i>keep-alive</i>) y no muestra la rotación. Bajo carga el reparto sigue siendo uniforme (sección 9.3).</p>
+
+<h3>9.3 Prueba de carga progresiva (k6)</h3>
+<p><b>Escenario</b> (<code>loadtest/k6-load.js</code>): 0→20 VUs (30 s), →50 (1 min), →100 (30 s), →0 (30 s); duración total 2 min 30 s. Cada iteración hace <code>GET /</code> y <code>GET /slow?ms=200</code> y cuenta qué backend respondió. <b>Umbrales:</b> p(95) &lt; 800 ms y errores &lt; 1 %. Se ejecuta desde el host (<code>--network host</code>, sobre <code>localhost:8080</code>). Comando:</p>
+<pre>docker run --rm -i --user "$(id -u):$(id -g)" --network host \
+  -v "$PWD/loadtest:/scripts:ro" -v "$PWD/docs/resultados:/out" grafana/k6:1.0.0 \
+  run --summary-export=/out/k6-load-resumen.json /scripts/k6-load.js</pre>
+<table>
+  <tr><th>Métrica</th><th>Resultado</th></tr>
+  <tr><td>Peticiones HTTP totales</td><td>40 576 (≈ 270 req/s)</td></tr>
+  <tr><td>Iteraciones</td><td>20 288 (≈ 135 it/s)</td></tr>
+  <tr><td>Checks exitosos</td><td>100 % (40 576 de 40 576)</td></tr>
+  <tr><td>Errores (<code>http_req_failed</code>)</td><td>0,00 %</td></tr>
+  <tr><td>Latencia media / mediana / máx.</td><td>100,9 ms / 102,7 ms / 205,0 ms</td></tr>
+  <tr><td>Latencia p(90) / p(95)</td><td>201,3 ms / 201,5 ms</td></tr>
+  <tr><td>VUs máximos</td><td>100</td></tr>
+  <tr><td>Umbrales</td><td>✓ p(95) &lt; 800 ms; ✓ errores &lt; 1 %</td></tr>
+  <tr><td>Respuestas por backend</td><td>server 1: 6 751 · server 2: 6 830 · server 3: 6 707</td></tr>
+</table>
+<p><b>Análisis.</b> La latencia p95 (~201 ms) corresponde casi por completo a los 200 ms simulados en <code>/slow</code>, lo que indica que la infraestructura (Nginx + backends) añade una sobrecarga mínima incluso con 100 usuarios concurrentes. El reparto entre backends difiere menos de 2 % entre el que más y el que menos respondió, lo que confirma el round-robin bajo carga.</p>
+<p><b>Sobre la mediana y los percentiles.</b> Cada iteración hace dos peticiones de comportamiento muy distinto: <code>GET /</code> (casi instantánea, &lt; 5 ms) y <code>GET /slow?ms=200</code> (≈ 200 ms). Por eso las métricas globales mezclan dos grupos y la <b>mediana (~103 ms) no es el tiempo típico de ninguna petición</b>: como la mitad de las peticiones es muy rápida y la otra mitad lenta, el p50 cae justo en la frontera entre ambos grupos (no es un promedio de las dos peticiones). Por la misma razón el p95 solo describe a <code>/slow</code>; para analizar cada endpoint conviene filtrar por la etiqueta <code>endpoint</code>.</p>
+<p><b>Por qué k6 (≈ 201 ms) y Grafana (≈ 234–242 ms) difieren.</b> No es sobrecarga del sistema. k6 mide cada petición individualmente, mientras que Grafana usa <code>histogram_quantile()</code>, que solo conoce cuántas peticiones cayeron en cada <i>bucket</i> del histograma e interpola linealmente dentro del bucket donde cae el percentil. Todas las peticiones a <code>/slow</code> (≈ 200 ms) caen en el bucket de 100–250 ms, de modo que el p95 se interpola como 0,1 + 0,15 × (0,95 − 0,5) / 0,5 ≈ 0,235 s, que coincide con lo observado. Es un error de resolución del histograma (sobreestima), no una latencia real mayor. Se comprobó consultando Prometheus directamente: <code>histogram_quantile(0.95, …)</code> devolvió 0,235 s con todas las peticiones de <code>/slow</code> dentro del bucket 0,1–0,25 s.</p>
+
+<h3>9.4 Prueba de estrés (k6)</h3>
+<p><b>Escenario</b> (<code>loadtest/k6-stress.js</code>): 0→50 VUs, →150, →300 (cada 30 s) y descenso, contra <code>/slow?ms=500</code> durante 2 minutos. Umbral: errores &lt; 10 %.</p>
+<table>
+  <tr><th>Métrica</th><th>Resultado</th></tr>
+  <tr><td>Peticiones totales</td><td>30 054 (≈ 250 req/s)</td></tr>
+  <tr><td>Checks exitosos / errores</td><td>100 % / 0,00 %</td></tr>
+  <tr><td>Latencia media / p(95) / máx.</td><td>501,0 ms / 501,8 ms / 514,6 ms</td></tr>
+  <tr><td>VUs máximos</td><td>300</td></tr>
+  <tr><td>Umbral</td><td>✓ errores &lt; 10 %</td></tr>
+</table>
+<p><b>Análisis.</b> Incluso con 300 usuarios simultáneos la latencia se mantuvo en ~501 ms, es decir, el tiempo simulado más ~1 ms, sin errores. Dado que Node.js atiende <code>/slow</code> con temporizadores asíncronos que no bloquean el <i>event loop</i>, y que 3 instancias reparten la carga, no se alcanzó el punto de saturación con este escenario; para encontrarlo habría que subir los VUs o usar un endpoint que consuma CPU.</p>
+
+<h3>9.5 Tolerancia a fallos</h3>
+<p>Se lanzaron 600 peticiones a <code>/slow?ms=100</code> con 10 clientes en paralelo y, a los 2 segundos, se ejecutó <code>docker compose stop backend1</code>.</p>
+<table>
+  <tr><th>Observación</th><th>Resultado</th></tr>
+  <tr><td>Códigos HTTP de las 600 peticiones</td><td>600 × <b>200</b>; ningún 5xx (ver <code>docs/resultados/tolerancia-codigos.txt</code>)</td></tr>
+  <tr><td>Reparto con backend1 caído (9 peticiones)</td><td>server 2: 4 · server 3: 5 (el tráfico se redistribuye entre los nodos vivos)</td></tr>
+  <tr><td>Tras <code>docker compose start backend1</code> (+20 s)</td><td>server 1: 2 · server 2: 4 · server 3: 3 (el nodo se reincorpora al pool)</td></tr>
+</table>
+<p>Esto demuestra la alta disponibilidad básica: <code>proxy_next_upstream</code> reintenta en otro backend y el usuario no percibe la caída. En el dashboard, el panel "Backends en UP" pasa de 3 a 2 (y "Targets en UP" de 6 a 5) mientras dura la falla, como muestra la Figura 7.</p>
+<figure>
+  <img src="img/grafana-4-falla-backend.png" alt="Dashboard con backend1 detenido">
+  <figcaption>Figura 7. Con <code>backend1</code> detenido: "Backends en UP" = 2 y "Targets en UP" = 5; el panel de errores 5xx permanece en 0.</figcaption>
+</figure>
+
+<h3>9.6 Persistencia de datos</h3>
+<p>Se ejecutó <code>docker compose down</code> (elimina contenedores y red, conserva volúmenes) y luego <code>docker compose up -d</code>. Los volúmenes <code>proyecto-final_prometheus_data</code> y <code>proyecto-final_grafana_data</code> siguieron existiendo; tras el reinicio Prometheus conservó el historial (más de 1 000 muestras del job <code>nginx</code> en las últimas 12 h, incluidas las anteriores al reinicio), Grafana mantuvo el dashboard y <code>verificar.sh</code> volvió a reportar los 6 targets en UP.</p>
+
+<h2>10. Decisiones de diseño y problemas encontrados</h2>
+<ul>
+  <li><b>Scraping directo a los backends.</b> Se bloqueó <code>/metrics</code> en Nginx (404) para que cada lectura corresponda a una instancia concreta y no se mezclen las cifras.</li>
+  <li><b>Round-robin con <code>zone</code>.</b> Sin memoria compartida, cada worker de Nginx mantenía su propio turno y con poco tráfico todas las peticiones iban al mismo backend. Con <code>zone</code> el reparto es exacto.</li>
+  <li><b>Healthchecks + <code>depends_on: service_healthy</code>.</b> Nginx falla al arrancar si no puede resolver los backends; esperar al estado <i>healthy</i> garantiza un arranque ordenado.</li>
+  <li><b>Provisioning en lugar de configuración manual.</b> El datasource y el dashboard viven en el repositorio, lo que hace el entorno reproducible con un solo comando.</li>
+  <li><b>Puertos configurables vía <code>.env</code>.</b> Evita conflictos en máquinas donde algún puerto está ocupado o reservado.</li>
+  <li><b>Usuario no root y <code>:ro</code> en los montajes.</b> Reduce la superficie de ataque.</li>
+  <li><b>k6 por Docker con <code>--user</code>.</b> Al principio el resumen JSON no se podía escribir en el volumen por permisos (<i>permission denied</i>); se resolvió ejecutando el contenedor con el UID/GID del host.</li>
+  <li><b>Limitación:</b> las pruebas se ejecutaron en una sola máquina, por lo que k6 y la infraestructura comparten recursos; las cifras son indicativas y no equivalen a un entorno de producción.</li>
+</ul>
+
+<h2>11. Conclusiones</h2>
+<ul>
+  <li>Se desplegó con un solo comando una infraestructura de 8 contenedores que integra balanceo de carga, observabilidad y persistencia, validada automáticamente por <code>verificar.sh</code>.</li>
+  <li>Nginx reparte el tráfico de forma uniforme (diferencia &lt; 2 % entre backends bajo 100 VUs) y absorbe la caída de un nodo sin errores visibles para el cliente (600/600 respuestas 200).</li>
+  <li>El sistema cumplió los umbrales de la prueba de carga (p95 ≈ 201 ms, 0 % de errores) y no mostró saturación con 300 usuarios virtuales.</li>
+  <li>La combinación Prometheus + Grafana con provisionamiento automático permite observar latencia, tasa de solicitudes y uso de recursos por contenedor, y hace el entorno reproducible.</li>
+  <li>Mejoras posibles: alertas con Alertmanager, TLS en Nginx, <i>health checks</i> activos en el balanceador, pruebas con endpoints intensivos en CPU y escalado de réplicas con <code>docker compose --scale</code> u orquestadores.</li>
+</ul>
+
+<h2>12. Anexo: estructura del repositorio</h2>
+<pre>
+ProyectoFinal-SO-/
+├── .env.example · .gitattributes · .gitignore · README.md
+├── docker-compose.yml          # 8 servicios, red y volúmenes
+├── backend/                    # Dockerfile, .dockerignore, app.js, package*.json
+├── nginx/nginx.conf            # proxy inverso, upstream y stub_status
+├── prometheus/prometheus.yml   # 6 targets cada 5 s
+├── grafana/
+│   ├── provisioning/{datasources,dashboards}/
+│   └── dashboards/proyecto-final.json
+├── loadtest/{k6-load.js,k6-stress.js}
+├── scripts/verificar.sh
+└── docs/
+    ├── resultados/             # salidas de k6 y prueba de tolerancia
+    └── informe/                # este informe (HTML y PDF) e imágenes
+</pre>
+</body>
+</html>
